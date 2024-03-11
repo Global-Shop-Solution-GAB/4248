@@ -1,0 +1,467 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Quantity Changes")
+Gui.Form..Size(10380,9915)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.GsMod.Create(GsGridControl)
+Gui.Form.GsMod.Size(11160,9630)
+Gui.Form.GsMod.Position(0,0)
+Gui.Form.GsMod.Anchor(15)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Author: Bix
+'Date: 6/12/2018
+'Customer: CartoPlastic S.A.
+'This program will house a shipments quantity customization program that will adjust Quantities on Shipments with Part(s) that have a sort code of "VARIABLE"
+'GCG_4248_ModifyShipQty.g2u
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.Caller.Hook,=,36640)
+	'Hook for adjusting shipment quantities (Pre-Save Hook) OES0101A
+	F.Intrinsic.Control.CallSub(ModifyShipQty)
+F.Intrinsic.Control.Else
+	'run report for log
+	F.Intrinsic.Control.CallSub(RunReport)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.OpenConnection.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+F.ODBC.Connection!con.OpenCompanyConnection
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {3}->{2}{1}Error Occurred {4} with description {5}{1}{1}GAB Version: {6}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Args.sSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.OpenConnection.End
+
+Program.Sub.CloseConnection.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+F.ODBC.Connection!con.Close
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {3}->{2}{1}Error Occurred {4} with description {5}{1}{1}GAB Version: {6}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Args.sSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.CloseConnection.End
+
+Program.Sub.ModifyShipQty.Start
+'Queries user to make changes to Qty's
+V.Local..BulkDeclareString(sError,sShipH,sShipX,sSQL,sSelect)
+V.Local..BulkDeclareLong(iCnt,iRet)
+V.Local..BulkDeclareFloat(fQty,fRet,fMod)
+V.Local.bChange.Declare(Boolean,False)
+F.Intrinsic.Control.Try
+
+'Shipment Order Num
+F.Intrinsic.String.LPad(V.Passed.000003,"0",7,V.Local.sShipH)
+'F.Intrinsic.String.LPad("223","0",7,V.Local.sShipH)
+'Shipment Order Suffix
+F.Intrinsic.String.LPad(V.Passed.000004,"0",4,V.Local.sShipX)
+'F.Intrinsic.String.LPad("1","0",4,V.Local.sShipX)
+
+F.Data.DataTable.CreateFromString("dtChange","","ORDER_NUM*!*ORDER_SUFFIX*!*LINE*!*ORIG_QTY*!*MOD_QTY*!*PER_MOD","String*!*String*!*String*!*Float*!*Float*!*Float","*!*","#$#",True)
+F.Data.DataTable.DeleteRow("dtChange")
+
+'Pull shipments lines in for order/suffix
+F.Intrinsic.String.Build("select ORDER_NO, ORDER_SUFFIX, ORDER_REC, RECORD_TYPE, LINE_TYPE, PART, QTY_SHIPPED, PRICE, rtrim(CODE_SORT) as CODE_SORT, DISCOUNT, EXCHANGE_CURRENCY, EXTENSION, AMT_DISCOUNT, DISCOUNT_PRICE, ORDER_DISC_AMT, PRCCLS_DISC_AMT, PRDLN_DISC_AMT, PRICE_ORDER, PRICE_DISC_ORD, EXTENSION_ORDER, AMT_DISC_ORDER, AMT_DISC_ORD_ORDER, AMT_DISC_PR_CL_ORD, AMT_DISC_PROD_LN_ORD from SHIPMENT_LINES where RECORD_TYPE = 'L' and ORDER_NO = '{0}' and ORDER_SUFFIX = '{1}';",V.Local.sShipH,V.Local.sShipX,V.Local.sSQL)
+F.Intrinsic.Control.CallSub(OpenConnection,"sSubroutine",V.Ambient.CurrentSubroutine)
+'Pull in SHIPMENT_LINES data to make changes as necessary
+F.Data.DataTable.CreateFromSQL("dtShipL","con",V.Local.sSQL,True)
+'CODE_SORT in SHIPMENT_LINES doesn't have anything in it so pull from the Inventory master
+F.Data.Dictionary.CreateFromSQL("dictPart","con","select PART, CODE_SORT from V_INVENTORY_MSTR")
+F.Intrinsic.Control.CallSub(CloseConnection,"sSubroutine",V.Ambient.CurrentSubroutine)
+F.Data.DataTable.FillFromDictionary("dtShipL","dictPart","PART","CODE_SORT")
+F.Data.Dictionary.Close("dictPart")
+F.Data.DataView.Create("dtShipL","dvVar",22,"CODE_SORT = 'VARIABLE'","")
+F.Data.DataView.ToDataTable("dtShipL","dvVar","dtVar",True)
+F.Data.DataView.Close("dtShipL","dvVar")
+
+'If nothing comes back for "VARIABLE" sort parts, exit
+F.Intrinsic.Control.If(V.DataTable.dtVar.RowCount,=,0)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+'Dropping columns that are not needed and adding an extra one to enter in Mod Qty
+F.Data.DataTable.RemoveColumn("dtVar","RECORD_TYPE")
+F.Data.DataTable.RemoveColumn("dtVar","LINE_TYPE")
+F.Data.DataTable.RemoveColumn("dtVar","PRICE")
+F.Data.DataTable.RemoveColumn("dtVar","CODE_SORT")
+F.Data.DataTable.RemoveColumn("dtVar","DISCOUNT")
+F.Data.DataTable.RemoveColumn("dtVar","EXCHANGE_CURRENCY")
+F.Data.DataTable.RemoveColumn("dtVar","EXTENSION")
+F.Data.DataTable.RemoveColumn("dtVar","AMT_DISCOUNT")
+F.Data.DataTable.RemoveColumn("dtVar","DISCOUNT_PRICE")
+F.Data.DataTable.RemoveColumn("dtVar","ORDER_DISC_AMT")
+F.Data.DataTable.RemoveColumn("dtVar","PRCCLS_DISC_AMT")
+F.Data.DataTable.RemoveColumn("dtVar","PRDLN_DISC_AMT")
+F.Data.DataTable.RemoveColumn("dtVar","PRICE_ORDER")
+F.Data.DataTable.RemoveColumn("dtVar","PRICE_DISC_ORD")
+F.Data.DataTable.RemoveColumn("dtVar","EXTENSION_ORDER")
+F.Data.DataTable.RemoveColumn("dtVar","AMT_DISC_ORDER")
+F.Data.DataTable.RemoveColumn("dtVar","AMT_DISC_ORD_ORDER")
+F.Data.DataTable.RemoveColumn("dtVar","AMT_DISC_PR_CL_ORD")
+F.Data.DataTable.RemoveColumn("dtVar","AMT_DISC_PROD_LN_ORD")
+F.Data.DataTable.AddColumn("dtVar","MOD_QTY","Float")
+F.Data.DataTable.AddExpressionColumn("dtVar","PER_MOD","Float","((QTY_SHIPPED - MOD_QTY) / QTY_SHIPPED) * 100")
+
+'pull up form so customer can confirm modified qty's
+F.Intrinsic.Control.CallSub(VariableGV)
+F.Intrinsic.Control.CallSub(SetContextMenu)
+Gui.Form..Show
+Gui.Form..WaitForDismiss
+
+'Loop through parts list to see if parts need to be corrected on the shipment
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtShipL.RowCount--,1)
+	F.Intrinsic.Control.If(V.DataTable.dtShipL(V.Local.iCnt).CODE_SORT!FieldVal,=,"VARIABLE")
+		'Verified that line exists in dtVar by checking CODE_SORT, now get the modded qty
+		F.Intrinsic.String.Build("ORDER_REC = '{0}'",V.DataTable.dtShipL(V.Local.iCnt).ORDER_REC!FieldValTrim,V.Local.sSelect)
+		F.Data.DataTable.Select("dtVar",V.Local.sSelect,V.Local.iRet)
+		V.Local.fQty.Set(V.DataTable.dtVar(V.Local.iRet).MOD_QTY!FieldVal)
+		V.Local.fMod.Set(V.DataTable.dtVar(V.Local.iRet).PER_MOD!FieldVal)
+		
+		'Check to make sure that entered Qty is less than the original Qty and it's greater than 0
+		F.Intrinsic.Control.If(V.Local.fQty,<,V.DataTable.dtShipL(V.Local.iCnt).QTY_SHIPPED!FieldVal,"and",V.Local.fQty,>,0)
+			'Company Currency
+			'Calculate extension w/discount and save it to DT
+			F.Intrinsic.Math.Mult(V.Local.fQty,V.DataTable.dtShipL(V.Local.iCnt).DISCOUNT_PRICE!FieldValFloat,V.Local.fRet)
+			F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"EXTENSION",V.Local.fRet)
+			'Calculate extension w/o discount
+			F.Intrinsic.Math.Mult(V.Local.fQty,V.DataTable.dtShipL(V.Local.iCnt).PRICE!FieldValFloat,V.Local.fRet)
+			'Calculate difference between extensions and save it to DT
+			F.Intrinsic.Math.Sub(V.Local.fRet,V.DataTable.dtShipL(V.Local.iCnt).EXTENSION!FieldValFloat,V.Local.fRet)
+			F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"AMT_DISCOUNT",V.Local.fRet)
+			'If difference is not 0 save it to other fields that are already not 0
+			F.Intrinsic.Control.If(V.Local.fRet,!=,0)
+				F.Intrinsic.Control.If(V.DataTable.dtShipL(V.Local.iCnt).ORDER_DISC_AMT!FieldValFloat,!=,0)
+					F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"ORDER_DISC_AMT",V.Local.fRet)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.If(V.DataTable.dtShipL(V.Local.iCnt).PRCCLS_DISC_AMT!FieldValFloat,!=,0)
+					F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"PRCCLS_DISC_AMT",V.Local.fRet)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.If(V.DataTable.dtShipL(V.Local.iCnt).PRDLN_DISC_AMT!FieldValFloat,!=,0)
+					F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"PRDLN_DISC_AMT",V.Local.fRet)
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+			
+			'Order Currency
+			'Calculate extension w/discount and save it to DT
+			F.Intrinsic.Math.Mult(V.Local.fQty,V.DataTable.dtShipL(V.Local.iCnt).PRICE_DISC_ORD!FieldValFloat,V.Local.fRet)
+			F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"EXTENSION_ORDER",V.Local.fRet)
+			'Calculate extension w/o discount
+			F.Intrinsic.Math.Mult(V.Local.fQty,V.DataTable.dtShipL(V.Local.iCnt).PRICE_ORDER!FieldValFloat,V.Local.fRet)
+			'Calculate difference between extensions and save it to DT
+			F.Intrinsic.Math.Sub(V.Local.fRet,V.DataTable.dtShipL(V.Local.iCnt).EXTENSION_ORDER!FieldValFloat,V.Local.fRet)
+			F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"AMT_DISC_ORDER",V.Local.fRet)
+			'If difference is not 0 save it to other fields that are already not 0
+			F.Intrinsic.Control.If(V.Local.fRet,!=,0)
+				F.Intrinsic.Control.If(V.DataTable.dtShipL(V.Local.iCnt).AMT_DISC_ORD_ORDER!FieldValFloat,!=,0)
+					F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"AMT_DISC_ORD_ORDER",V.Local.fRet)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.If(V.DataTable.dtShipL(V.Local.iCnt).AMT_DISC_PR_CL_ORD!FieldValFloat,!=,0)
+					F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"AMT_DISC_PR_CL_ORD",V.Local.fRet)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.If(V.DataTable.dtShipL(V.Local.iCnt).AMT_DISC_PROD_LN_ORD!FieldValFloat,!=,0)
+					F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"AMT_DISC_PROD_LN_ORD",V.Local.fRet)
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+		
+			'Use the live updated Percentage Value for PER_MOD from DT
+			F.Data.DataTable.AddRow("dtChange","ORDER_NUM",V.Local.sShipH,"ORDER_SUFFIX",V.Local.sShipX,"LINE",V.DataTable.dtShipL(V.Local.iCnt).ORDER_REC!FieldValTrim,"ORIG_QTY",V.DataTable.dtShipL(V.Local.iCnt).QTY_SHIPPED!FieldValFloat,"MOD_QTY",V.Local.fQty,"PER_MOD",V.Local.fMod)
+			F.Data.DataTable.SetValue("dtShipL",V.Local.iCnt,"QTY_SHIPPED",V.Local.fQty)
+			
+			'Sets that a change has been made to the tables
+			V.Local.bChange.Set(True)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+	
+	V.Local.fQty.Set(0)
+	V.Local.fRet.Set(0)
+	V.Local.iRet.Set(0)
+	V.Local.sSelect.Redim(0,0)
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+'If a change has been made, update the DB
+F.Intrinsic.Control.If(V.Local.bChange)
+	'Change the CODE_SORT values back to "" before saving to DB
+	F.Data.DataTable.SetValue("dtShipL",-1,"CODE_SORT","")
+	F.Intrinsic.Control.CallSub(OpenConnection,"sSubroutine",V.Ambient.CurrentSubroutine)
+	F.Data.DataTable.SaveToDB("dtShipL","con","SHIPMENT_LINES","ORDER_NO*!*ORDER_SUFFIX*!*ORDER_REC",256)
+	F.Data.DataTable.SaveToDB("dtChange","con","GCG_4248_SHPMOD_LIST","ORDER_NUM*!*ORDER_SUFFIX*!*LINE",256,"ORDER_NUM@!@ORDER_NUM*!*ORDER_SUFFIX@!@ORDER_SUFFIX*!*LINE@!@LINE*!*ORIG_QTY@!@ORIG_QTY*!*MOD_QTY@!@MOD_QTY*!*PER_MOD@!@PER_MOD")
+	F.Intrinsic.Control.CallSub(CloseConnection,"sSubroutine",V.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndIf
+
+'Close DTs that are still open
+F.Data.DataTable.Close("dtChange")
+F.Data.DataTable.Close("dtShipL")
+F.Data.DataTable.Close("dtVar")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.ModifyShipQty.End
+
+Program.Sub.VariableGV.Start
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+Gui.Form.GsMod.AddGridviewFromDataTable("gvVar","dtVar")
+
+Gui.Form.GsMod.SetGridviewProperty("gvVar","MultiSelect",False)
+Gui.Form.GsMod.SetGridviewProperty("gvVar","AllowSort",True)
+Gui.Form.GsMod.SetGridviewProperty("gvVar","AllowFilter",True)
+Gui.Form.GsMod.SetGridviewProperty("gvVar","OptionsDetailShowDetailTabs",False)
+Gui.Form.GsMod.SetGridviewProperty("gvVar","OptionsViewShowGroupPanel",True)
+Gui.Form.GsMod.SetGridviewProperty("gvVar","EnableAppearanceEvenRow",True)
+Gui.Form.GsMod.SetGridviewProperty("gvVar","OptionsViewColumnAutoWidth",False)
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_NO","Caption","Shipment Ord")
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_SUFFIX","Caption","Seq")
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_REC","Caption","Line")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PART","Caption","Part")
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","Caption","Original Qty")
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","Caption","New Qty")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","Caption","Mod %")
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_NO","AllowEdit",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_SUFFIX","AllowEdit",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_REC","AllowEdit",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PART","AllowEdit",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","AllowEdit",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","AllowEdit",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","AllowEdit",False)
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_NO","AllowFocus",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_SUFFIX","AllowFocus",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_REC","AllowFocus",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PART","AllowFocus",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","AllowFocus",False)
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","AllowFocus",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","AllowFocus",False)
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_NO","MinWidth",90)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_SUFFIX","MinWidth",30)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_REC","MinWidth",30)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PART","MinWidth",125)
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","MinWidth",100)
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","MinWidth",100)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","MinWidth",100)
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_NO","HeaderFontBold",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_SUFFIX","HeaderFontBold",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_REC","HeaderFontBold",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PART","HeaderFontBold",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","HeaderFontBold",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","HeaderFontBold",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","HeaderFontBold",True)
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_NO","HeaderHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_SUFFIX","HeaderHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_REC","HeaderHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PART","HeaderHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","HeaderHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","HeaderHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","HeaderHAlignment","Center")
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_NO","CellHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_SUFFIX","CellHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","ORDER_REC","CellHAlignment","Center")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PART","CellHAlignment","Near")
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","CellHAlignment","Near")
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","CellHAlignment","Near")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","CellHAlignment","Near")
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","EditMaskType","Numeric")
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","EditMaskType","Numeric")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","EditMaskType","Numeric")
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","EditMask","#,###,##0.0000")
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","EditMask","#,###,##0.0000")
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","EditMask","#,###,##0.0000")
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","QTY_SHIPPED","EditMaskAsDisplayFormat",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","EditMaskAsDisplayFormat",True)
+Gui.Form.GsMod.SetColumnProperty("gvVar","PER_MOD","EditMaskAsDisplayFormat",True)
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","CellBackColor","Yellow")
+
+Gui.Form.GsMod.SetColumnProperty("gvVar","MOD_QTY","ReadOnly",False)
+
+Gui.Form.GsMod.MainView("gvVar")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.VariableGV.End
+
+Program.Sub.Form_UnLoad.Start
+V.Local..BulkDeclareString(sError,sRows)
+V.Local..BulkDeclareLong(iCnt,iRows)
+V.Local.bMod.Declare(Boolean,False)
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtVar.RowCount--,1)
+	F.Intrinsic.Control.If(V.DataTable.dtVar(V.Local.iCnt).MOD_QTY!FieldVal,=,0)
+		V.Local.bMod.Set(True)
+		F.Intrinsic.String.Build("{0}*!*{1}",V.Local.sRows,V.Local.iCnt,V.Local.sRows)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCnt)
+F.Intrinsic.String.Split(V.Local.sRows,"*!*",V.Local.iRows)
+
+F.Intrinsic.Control.If(V.Local.bMod)
+	F.Intrinsic.UI.Msgbox("You have at least one entry blank or with a Qty of 0. Exiting this screen will force the program to make no changes to these lines.","Exiting Qty Entry",1,V.Local.iCnt)
+	F.Intrinsic.Control.If(V.Local.iCnt,=,2)
+		'Cancel
+		'return to Form
+		Gui.Form..Show
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.ElseIf(V.Local.iCnt,=,1)
+		'OK
+		'this will cause the program to make no changes to the lines affected and leave no logs for them
+		F.Intrinsic.Control.For(V.Local.iCnt,0,V.Local.iRows.UBound,1)
+			F.Intrinsic.Control.If(V.DataTable.dtVar(V.Local.iRows(V.Local.iCnt)).MOD_QTY!FieldVal,=,0)
+				F.Data.DataTable.SetValue("dtVar",V.Local.iRows(V.Local.iCnt),"MOD_QTY",V.DataTable.dtVar(V.Local.iRows(V.Local.iCnt)).QTY_SHIPPED!FieldVal)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Next(V.Local.iCnt)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+Gui.Form..Visible(False)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.SetContextMenu.Start
+'Right click menu
+V.Local.sError.Declare(String)
+F.Intrinsic.Control.Try
+
+Gui.Form..ContextMenuCreate("ctxGSGC")
+Gui.Form.GsMod.ContextMenuAttach("ctxGSGC")
+Gui.Form..ContextMenuAddItem("ctxGSGC","ClearItems",0,"Clear Items")
+Gui.Form..ContextMenuAddItem("ctxGSGC","MatchQty",0,"Match Quantities")
+Gui.Form..ContextMenuAddItem("ctxGSGC","MatchRemQty",0,"Match Remaining Quantities")
+Gui.Form..ContextMenuSetItemEventHandler("ctxGSGC","ClearItems","MenuClickClear")
+Gui.Form..ContextMenuSetItemEventHandler("ctxGSGC","MatchQty","MenuClickMatch")
+Gui.Form..ContextMenuSetItemEventHandler("ctxGSGC","MatchRemQty","MenuClickMatchRem")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.SetContextMenu.End
+
+Program.Sub.MenuClickClear.Start
+'Sets all cells for MOD_QTY to 0
+V.Local.sError.Declare(String)
+V.Local.iCnt.Declare(Long)
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtVar.RowCount--,1)
+	Gui.Form.GsMod.SetCellValueByColumnName("gvVar","MOD_QTY",V.Local.iCnt,0)
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.MenuClickClear.End
+
+Program.Sub.MenuClickMatch.Start
+'Populates all cells for MOD_QTY with QTY_SHIPPED
+V.Local.sError.Declare(String)
+V.Local.iCnt.Declare(Long)
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtVar.RowCount--,1)
+	F.Data.DataTable.SetValue("dtVar",V.Local.iCnt,"MOD_QTY",V.DataTable.dtVar(V.Local.iCnt).QTY_SHIPPED!FieldVal)
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.MenuClickMatch.End
+
+Program.Sub.MenuClickMatchRem.Start
+'Populates all cells for MOD_QTY if the cell is blank or 0
+V.Local.sError.Declare(String)
+V.Local.iCnt.Declare(Long)
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtVar.RowCount--,1)
+	F.Intrinsic.Control.If(V.DataTable.dtVar(V.Local.iCnt).MOD_QTY!FieldVal,=,0)
+		F.Data.DataTable.SetValue("dtVar",V.Local.iCnt,"MOD_QTY",V.DataTable.dtVar(V.Local.iCnt).QTY_SHIPPED!FieldVal)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.MenuClickMatchRem.End
+
+Program.Sub.RunReport.Start
+'Opens browsers to get information for report and then runs report for log
+V.Local..BulkDeclareString(sError,sParams,sValues,sRet)
+V.Local.iRet.Declare(Long)
+F.Intrinsic.Control.Try
+
+V.Local.sParams.Set("StartOrder*!*EndOrder")
+'Get starting order
+F.Intrinsic.Control.CallSub(OpenConnection,"sOtherSubroutine",V.Ambient.CurrentSubroutine)
+F.Intrinsic.UI.Browser("Starting Order","con","select distinct ORDER_NUM from GCG_4248_SHPMOD_LIST","Order Number","100",V.Local.sRet)
+F.Intrinsic.Control.CallSub(CloseConnection,"sOtherSubroutine",V.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.If(V.Local.sRet.IsCancel)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+V.Local.sValues.Set(V.Local.sRet)
+'Get ending order
+F.Intrinsic.Control.CallSub(OpenConnection,"sOtherSubroutine",V.Ambient.CurrentSubroutine)
+F.Intrinsic.UI.Browser("Ending Order","con","select distinct ORDER_NUM from GCG_4248_SHPMOD_LIST","Order Number","100",V.Local.sRet)
+F.Intrinsic.Control.CallSub(CloseConnection,"sOtherSubroutine",V.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.If(V.Local.sRet.IsCancel)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+F.Intrinsic.String.Build("{0}*!*{1}",V.Local.sValues,V.Local.sRet,V.Local.sValues)
+'Get report number
+F.Global.BI.GetIDFromName("GCG_4248_LogReport.RPT",V.Local.iRet)
+'Run report
+F.Global.BI.PrintReport(V.Local.iRet,3,V.Local.sParams,V.Local.sValues,V.Printer.DefaultPrinter,True)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.RunReport.End
